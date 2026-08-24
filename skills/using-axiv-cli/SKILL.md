@@ -15,6 +15,12 @@ Read [references/installation.md](references/installation.md) when neither comma
 
 Stop and report the installation error when the installation instructions do not produce a working command prefix.
 
+When an `axiv` command returns an error, update `axiv` by following [references/installation.md](references/installation.md) before troubleshooting the error.
+
+After updating, rerun only non-quota, read-only checks such as `axiv --help` or `axiv auth status --json`.
+
+Do not automatically retry a quota-consuming command or remote library write after updating.
+
 Do not call alphaXiv REST or MCP endpoints directly and do not import private Python client methods.
 
 Run the resolved command prefix with `auth status --json` before any authenticated research or library workflow.

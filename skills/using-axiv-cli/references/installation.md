@@ -12,7 +12,17 @@ Run `axiv --help` to verify that the installed executable is available.
 
 Use `uv tool update-shell` and start a new shell when installation succeeds but `axiv` is not on `PATH`.
 
-Use `uv tool upgrade axiv` when an installed version needs to be updated.
+## Update before troubleshooting
+
+When any `axiv` command returns an error, first run `uv tool upgrade axiv` before diagnosing the error.
+
+If uv reports that the tool is not installed, run `uv tool install axiv` instead.
+
+Verify the updated published executable with `axiv --help`.
+
+If the error came from `uv run axiv` in a source checkout, use the updated published executable for verification before changing source code.
+
+Do not automatically repeat quota-consuming research commands or remote library writes after updating.
 
 ## Run from a source checkout
 
