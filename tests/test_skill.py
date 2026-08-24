@@ -36,6 +36,7 @@ def test_skill_name_frontmatter_and_required_references() -> None:
 
     assert metadata["name"].strip() == SKILL_DIR.name
     assert "alphaXiv" in metadata["description"]
+    assert (SKILL_DIR / "references" / "installation.md").is_file()
     assert (SKILL_DIR / "references" / "command-map.md").is_file()
     assert (SKILL_DIR / "references" / "workflows.md").is_file()
 
