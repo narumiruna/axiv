@@ -7,6 +7,7 @@ import axiv.clients.mcp as mcp_client_module
 from axiv.clients.mcp import McpClient
 from axiv.errors import InputError
 from axiv.errors import PermissionDeniedError
+from axiv.errors import RateLimitError
 from axiv.errors import RemoteAPIError
 from axiv.models.mcp import AnswerPdfQueriesArguments
 from axiv.models.mcp import CreateFolderArguments
@@ -283,33 +284,248 @@ def test_session_and_stream_close_when_initialization_fails(monkeypatch: pytest.
     assert stream.closed is True
 
 
-def test_production_transport_preflight_preserves_authentication_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ALPHAXIV_API_KEY", "axv-test-secret")
-
+def test_production_streamable_sends_auth_without_head_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeHttpClient:
-        follow_redirects = True
+        def __init__(self) -> None:
+            self.closed = False
 
         async def __aenter__(self) -> "FakeHttpClient":
             return self
 
         async def __aexit__(self, *_args: object) -> None:
-            return None
-
-        async def head(self, url: str) -> object:
-            assert url == "https://api.alphaxiv.org/mcp/v1"
-            assert self.follow_redirects is False
-            return SimpleNamespace(status_code=401)
+            self.closed = True
 
     fake_http = FakeHttpClient()
-    monkeypatch.setattr(mcp_client_module, "create_mcp_http_client", lambda headers: fake_http)
+    fake_transport = FakeStreamContext()
+    captured_headers: list[dict[str, str]] = []
+
+    def http_factory(*, headers: dict[str, str]) -> FakeHttpClient:
+        captured_headers.append(headers)
+        return fake_http
+
+    def stream_factory(url: str, *, http_client: object) -> FakeStreamContext:
+        assert url == "https://api.alphaxiv.org/mcp/v1"
+        assert http_client is fake_http
+        return fake_transport
+
+    monkeypatch.setattr(mcp_client_module, "create_mcp_http_client", http_factory)
+    monkeypatch.setattr(mcp_client_module, "streamable_http_client", stream_factory)
 
     async def scenario() -> None:
-        client = McpClient()
-        with pytest.raises(PermissionDeniedError, match="MCP authentication failed"):
-            async with client:
-                pass
+        async with mcp_client_module._production_streamable(
+            "https://api.alphaxiv.org/mcp/v1",
+            headers={"Authorization": "Bearer axv-test-secret"},
+        ) as streams:
+            assert len(streams) == 3
 
     anyio.run(scenario)
+
+    assert captured_headers == [{"Authorization": "Bearer axv-test-secret"}]
+    assert fake_transport.closed is True
+    assert fake_http.closed is True
+
+
+def test_production_sse_sends_auth_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_sse = FakeStreamContext()
+    captured_headers: list[dict[str, str]] = []
+
+    def sse_factory(url: str, *, headers: dict[str, str]) -> FakeStreamContext:
+        assert url == "https://api.alphaxiv.org/mcp/v1"
+        captured_headers.append(headers)
+        return fake_sse
+
+    monkeypatch.setattr(mcp_client_module, "sse_client", sse_factory)
+
+    async def scenario() -> None:
+        async with mcp_client_module._production_sse(
+            "https://api.alphaxiv.org/mcp/v1",
+            headers={"Authorization": "Bearer axv-test-secret"},
+        ) as streams:
+            assert len(streams) == 3
+
+    anyio.run(scenario)
+
+    assert captured_headers == [{"Authorization": "Bearer axv-test-secret"}]
+    assert fake_sse.closed is True
+
+
+def test_connection_failure_falls_back_before_initialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingStreamContext(FakeStreamContext):
+        async def __aenter__(self) -> tuple[object, object, None]:
+            raise RuntimeError("streamable unavailable")
+
+    primary_stream = FailingStreamContext()
+    fallback_stream = FakeStreamContext()
+    fallback_session = FakeSession()
+    fallback_calls = 0
+
+    def primary_factory(_url: str, *, headers: dict[str, str]) -> FailingStreamContext:
+        assert headers["Authorization"] == "Bearer axv-test-secret"
+        return primary_stream
+
+    def fallback_factory(_url: str, *, headers: dict[str, str]) -> FakeStreamContext:
+        nonlocal fallback_calls
+        assert headers["Authorization"] == "Bearer axv-test-secret"
+        fallback_calls += 1
+        return fallback_stream
+
+    monkeypatch.setenv("ALPHAXIV_API_KEY", "axv-test-secret")
+    client = McpClient(
+        _stream_factory=primary_factory,
+        _fallback_stream_factory=fallback_factory,
+        _session_factory=lambda _read, _write: FakeSessionContext(fallback_session),
+    )
+
+    async def scenario() -> None:
+        async with client:
+            initialized = await client.initialize()
+            assert initialized.server_name == "alphaXiv"
+
+    anyio.run(scenario)
+
+    assert fallback_calls == 1
+    assert fallback_stream.closed is True
+    assert fallback_session.closed is True
+
+
+def test_initialization_failure_replaces_primary_session_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingSession(FakeSession):
+        async def initialize(self) -> object:
+            self.initialize_calls += 1
+            raise RuntimeError("streamable initialize failed")
+
+    class NamedStreamContext(FakeStreamContext):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self.name = name
+
+        async def __aenter__(self) -> tuple[str, object, None]:
+            return self.name, object(), None
+
+    class NoisySessionContext(FakeSessionContext):
+        async def __aexit__(self, *_args: object) -> None:
+            await super().__aexit__(*_args)
+            raise RuntimeError("primary cleanup failed")
+
+    primary_stream = NamedStreamContext("primary")
+    fallback_stream = NamedStreamContext("fallback")
+    primary_session = FailingSession()
+    fallback_session = FakeSession()
+    fallback_calls = 0
+
+    def fallback_factory(_url: str, *, headers: dict[str, str]) -> NamedStreamContext:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return fallback_stream
+
+    def session_factory(read: object, _write: object) -> FakeSessionContext:
+        if read == "primary":
+            return NoisySessionContext(primary_session)
+        return FakeSessionContext(fallback_session)
+
+    monkeypatch.setenv("ALPHAXIV_API_KEY", "axv-test-secret")
+    client = McpClient(
+        _stream_factory=lambda _url, headers: primary_stream,
+        _fallback_stream_factory=fallback_factory,
+        _session_factory=session_factory,
+    )
+
+    async def scenario() -> None:
+        async with client:
+            initialized = await client.initialize()
+            await client.discover_papers(
+                DiscoverPapersArguments(keywords=("agents",), question="Question", difficulty=3)
+            )
+            assert initialized.server_name == "alphaXiv"
+
+    anyio.run(scenario)
+
+    assert primary_session.initialize_calls == 1
+    assert primary_session.closed is True
+    assert primary_stream.closed is True
+    assert fallback_session.initialize_calls == 1
+    assert [name for name, _ in fallback_session.calls] == ["discover_papers"]
+    assert fallback_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_type"),
+    [(403, PermissionDeniedError), (429, RateLimitError)],
+)
+def test_authentication_and_rate_limit_failures_do_not_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    error_type: type[Exception],
+) -> None:
+    class StatusError(Exception):
+        def __init__(self, status: int) -> None:
+            self.response = SimpleNamespace(status_code=status)
+            super().__init__(f"private status {status}")
+
+    class FailingSession(FakeSession):
+        async def initialize(self) -> object:
+            raise StatusError(status_code)
+
+    fallback_calls = 0
+
+    def fallback_factory(_url: str, *, headers: dict[str, str]) -> FakeStreamContext:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return FakeStreamContext()
+
+    primary_stream = FakeStreamContext()
+    failing_session = FailingSession()
+    monkeypatch.setenv("ALPHAXIV_API_KEY", "axv-test-secret")
+    client = McpClient(
+        _stream_factory=lambda _url, headers: primary_stream,
+        _fallback_stream_factory=fallback_factory,
+        _session_factory=lambda _read, _write: FakeSessionContext(failing_session),
+    )
+
+    async def scenario() -> None:
+        async with client:
+            with pytest.raises(error_type):
+                await client.initialize()
+
+    anyio.run(scenario)
+
+    assert fallback_calls == 0
+
+
+def test_tool_failure_is_not_retried_on_fallback_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingCallSession(FakeSession):
+        async def call_tool(self, name: str, arguments: dict[str, object]) -> object:
+            self.calls.append((name, arguments))
+            raise RuntimeError("response interrupted")
+
+    session = FailingCallSession()
+    fallback_calls = 0
+
+    def fallback_factory(_url: str, *, headers: dict[str, str]) -> FakeStreamContext:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return FakeStreamContext()
+
+    primary_stream = FakeStreamContext()
+    monkeypatch.setenv("ALPHAXIV_API_KEY", "axv-test-secret")
+    client = McpClient(
+        _stream_factory=lambda _url, headers: primary_stream,
+        _fallback_stream_factory=fallback_factory,
+        _session_factory=lambda _read, _write: FakeSessionContext(session),
+    )
+
+    async def scenario() -> None:
+        async with client:
+            await client.initialize()
+            with pytest.raises(RemoteAPIError, match="MCP tool discover_papers failed"):
+                await client.discover_papers(
+                    DiscoverPapersArguments(keywords=("agents",), question="Question", difficulty=3)
+                )
+
+    anyio.run(scenario)
+
+    assert len(session.calls) == 1
+    assert fallback_calls == 0
 
 
 def test_transport_authentication_failure_is_mapped_and_client_is_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -324,11 +540,18 @@ def test_transport_authentication_failure_is_mapped_and_client_is_closed(monkeyp
         async def __aenter__(self) -> tuple[object, object, None]:
             raise AuthenticationError
 
+    fallback_calls = 0
+
     def stream_factory(_url: str, *, headers: dict[str, str]) -> FailingStreamContext:
         assert headers["Authorization"] == "Bearer axv-test-secret"
         return FailingStreamContext()
 
-    client = McpClient(_stream_factory=stream_factory)
+    def fallback_factory(_url: str, *, headers: dict[str, str]) -> FakeStreamContext:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return FakeStreamContext()
+
+    client = McpClient(_stream_factory=stream_factory, _fallback_stream_factory=fallback_factory)
 
     async def scenario() -> None:
         with pytest.raises(PermissionDeniedError, match="MCP authentication failed") as captured:
@@ -340,6 +563,8 @@ def test_transport_authentication_failure_is_mapped_and_client_is_closed(monkeyp
                 pass
 
     anyio.run(scenario)
+
+    assert fallback_calls == 0
 
 
 def test_authentication_status_is_mapped_without_remote_details(monkeypatch: pytest.MonkeyPatch) -> None:

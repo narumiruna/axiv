@@ -72,6 +72,10 @@ uv run axiv auth status --json
 
 The CLI does not accept `--api-key`, browser cookies, or arbitrary MCP endpoints.
 
+The native MCP client uses streamable HTTP first and falls back to SSE only while opening or initializing a session.
+
+It never changes transports or retries after a tool call begins.
+
 Research commands call alphaXiv Assistant models and consume Assistant quota.
 
 ```bash
