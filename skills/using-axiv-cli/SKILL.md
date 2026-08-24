@@ -19,7 +19,7 @@ Do not call alphaXiv REST or MCP endpoints directly and do not import private Py
 
 Run the resolved command prefix with `auth status --json` before any authenticated research or library workflow.
 
-Stop and report the error when the API key is missing, authentication fails, the tool contract drifts, or alphaXiv returns `403`.
+Stop and report the error when the API key is missing, authentication fails, a reviewed tool is missing or changes schema, or alphaXiv returns `403`.
 
 Read [references/command-map.md](references/command-map.md) to select the exact command and understand its authentication, quota, and remote effects.
 

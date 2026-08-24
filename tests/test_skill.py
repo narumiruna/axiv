@@ -83,5 +83,5 @@ def test_skill_uses_only_cli_and_contains_required_safety_stops() -> None:
     assert "https://api.alphaxiv.org" not in combined
     assert "McpClient" not in combined
     assert "PublicRestClient" not in combined
-    for required in ("--yes", "quota", "403", "unknown tool", "explicit user authorization"):
+    for required in ("--yes", "quota", "403", "breaking tool drift", "explicit user authorization"):
         assert required.lower() in combined.lower()
