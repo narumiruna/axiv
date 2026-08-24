@@ -6,7 +6,7 @@ Prefer `--json` for agent-readable output.
 
 | User need | CLI command | Backend | Authentication | Quota | Remote effect | Primary failure handling |
 | --- | --- | --- | --- | --- | --- | --- |
-| Check MCP access | `axiv auth status --json` | MCP initialize and tools/list | API key required | None | Read only | Stop on missing key, permission failure, or tool drift. |
+| Check MCP access | `axiv auth status --json` | MCP initialize and tools/list | API key required | None | Read only | Stop when a reviewed tool is missing or changes schema. |
 | Discover papers | `axiv research discover QUESTION --keyword KEYWORD --json` | `discover_papers` | API key required | Assistant | Read only | Stop on quota exhaustion and do not invent keywords. |
 | Read paper content | `axiv paper content PAPER --json` | `get_paper_content` | API key required | Assistant | Read only | Stop on quota exhaustion or an unsupported paper URL. |
 | Read full extracted text | `axiv paper content PAPER --full-text --json` | `get_paper_content` | API key required | Assistant | Read only | Stop on quota exhaustion or an unsupported paper URL. |
@@ -23,4 +23,6 @@ Prefer `--json` for agent-readable output.
 
 Never use `--yes` until the user has authorized the exact write described in the final command.
 
-Stop rather than retry when the response reports a missing key, `403`, tool drift, quota exhaustion, or an unknown tool.
+Stop rather than retry when the response reports a missing key, `403`, breaking tool drift, or quota exhaustion.
+
+Treat additional advertised tools as compatible because the CLI cannot dispatch tools outside its static reviewed contracts.

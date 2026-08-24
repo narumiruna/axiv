@@ -20,7 +20,10 @@ async def _status() -> AuthStatusResult:
         initialized = await client.initialize()
         drift = check_mcp_tools(await client.list_tools())
     if not drift.compatible:
-        raise ToolDriftError(f"alphaXiv MCP tool contract drift detected ({len(drift.issues)} issues)")
+        issue_summary = "; ".join(f"{issue.tool} {issue.kind}: {issue.detail}" for issue in drift.issues)
+        raise ToolDriftError(
+            f"alphaXiv MCP tool contract drift detected ({len(drift.issues)} issues): {issue_summary}"
+        )
     return AuthStatusResult(
         api_key_present=bool(os.getenv("ALPHAXIV_API_KEY", "").strip()),
         initialized=True,

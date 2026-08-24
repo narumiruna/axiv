@@ -153,16 +153,11 @@ MCP_TOOLS: Mapping[McpToolName, McpToolContract] = MappingProxyType(
 def check_mcp_tools(candidate: McpToolList) -> McpToolDriftReport:
     remote_by_name = {tool.name: tool for tool in candidate.tools}
     expected_names = {name.value for name in MCP_TOOLS}
-    remote_names = set(remote_by_name)
 
     issues = [
         McpToolDriftIssue(kind="missing_tool", tool=name, detail="reviewed tool is missing")
-        for name in sorted(expected_names - remote_names)
+        for name in sorted(expected_names - remote_by_name.keys())
     ]
-    issues.extend(
-        McpToolDriftIssue(kind="unknown_tool", tool=name, detail="unreviewed tool was advertised")
-        for name in sorted(remote_names - expected_names)
-    )
 
     for name, contract in MCP_TOOLS.items():
         remote = remote_by_name.get(name.value)
@@ -173,7 +168,10 @@ def check_mcp_tools(candidate: McpToolList) -> McpToolDriftReport:
                 McpToolDriftIssue(
                     kind="required_arguments",
                     tool=name.value,
-                    detail="required arguments changed",
+                    detail=(
+                        f"expected {sorted(contract.required_arguments)}; "
+                        f"advertised {sorted(remote.required_arguments)}"
+                    ),
                 )
             )
         if set(remote.argument_names) != set(contract.argument_names):
@@ -181,7 +179,7 @@ def check_mcp_tools(candidate: McpToolList) -> McpToolDriftReport:
                 McpToolDriftIssue(
                     kind="argument_names",
                     tool=name.value,
-                    detail="accepted argument names changed",
+                    detail=f"expected {sorted(contract.argument_names)}; advertised {sorted(remote.argument_names)}",
                 )
             )
 

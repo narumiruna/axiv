@@ -102,7 +102,10 @@ def test_auth_status_distinguishes_tool_drift(fake_client: FakeMcpClient, monkey
     result = runner.invoke(app, ["auth", "status", "--json"])
 
     assert result.exit_code == 6
-    assert json.loads(result.stderr)["error"]["code"] == "tool_drift"
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "tool_drift"
+    assert "missing_tool: reviewed tool is missing" in error["message"]
+    assert "unknown_tool" not in error["message"]
     assert "axv-private-value" not in result.stderr
     assert fake_client.calls == ["initialize", "list_tools", "close"]
 
