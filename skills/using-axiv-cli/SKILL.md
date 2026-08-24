@@ -15,13 +15,17 @@ Read [references/installation.md](references/installation.md) when neither comma
 
 Stop and report the installation error when the installation instructions do not produce a working command prefix.
 
-When an `axiv` command returns an error, update `axiv` by following [references/installation.md](references/installation.md) before troubleshooting the error.
+Do not select or retry MCP transports manually because `axiv` handles streamable HTTP to SSE fallback only before tool dispatch.
+
+When an authenticated command reports an unexpected runtime, MCP connection, initialization, or breaking tool drift error, update `axiv` by following [references/installation.md](references/installation.md) before troubleshooting.
 
 After updating, rerun only non-quota, read-only checks such as `axiv --help` or `axiv auth status --json`.
 
+Treat a surfaced tool-call transport error as terminal because the remote outcome may be ambiguous.
+
 Do not automatically retry a quota-consuming command or remote library write after updating.
 
-Do not call alphaXiv REST or MCP endpoints directly and do not import private Python client methods.
+Do not invoke `mcp2cli`, call alphaXiv REST or MCP endpoints directly, or import private Python client methods.
 
 Run the resolved command prefix with `auth status --json` before any authenticated research or library workflow.
 
