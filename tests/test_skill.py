@@ -85,5 +85,7 @@ def test_skill_uses_only_cli_and_contains_required_safety_stops() -> None:
     assert "PublicRestClient" not in combined
     for required in ("--yes", "quota", "403", "breaking tool drift", "explicit user authorization"):
         assert required.lower() in combined.lower()
-    assert "first run `uv tool upgrade axiv` before diagnosing the error" in combined
+    assert "unexpected runtime, MCP connection, initialization, or breaking tool drift error" in combined
+    assert "handles streamable HTTP to SSE fallback only before tool dispatch" in combined
     assert "Do not automatically retry a quota-consuming command or remote library write after updating" in combined
+    assert "Never invoke `mcp2cli` or another generic MCP client as a fallback" in combined

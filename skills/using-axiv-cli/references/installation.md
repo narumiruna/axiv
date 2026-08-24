@@ -14,15 +14,17 @@ Use `uv tool update-shell` and start a new shell when installation succeeds but 
 
 ## Update before troubleshooting
 
-When any `axiv` command returns an error, first run `uv tool upgrade axiv` before diagnosing the error.
+When an authenticated command reports an unexpected runtime, MCP connection, initialization, or breaking tool drift error, first run `uv tool upgrade axiv` before diagnosing it.
+
+Do not upgrade for invalid input, a missing API key, `401`, `403`, quota exhaustion, or an expected not-found response.
 
 If uv reports that the tool is not installed, run `uv tool install axiv` instead.
 
-Verify the updated published executable with `axiv --help`.
+Verify the updated published executable with `axiv --help` and `axiv auth status --json`.
 
 If the error came from `uv run axiv` in a source checkout, use the updated published executable for verification before changing source code.
 
-Do not automatically repeat quota-consuming research commands or remote library writes after updating.
+Do not automatically repeat quota-consuming research commands, remote library writes, or tool calls with ambiguous outcomes after updating.
 
 ## Run from a source checkout
 
