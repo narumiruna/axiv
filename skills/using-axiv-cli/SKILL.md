@@ -11,7 +11,9 @@ Use an installed `axiv` executable when available.
 
 From this source checkout, fall back to `uv run axiv` as the command prefix when `axiv` is not installed.
 
-Stop and report the installation error when neither command prefix can show CLI help.
+Read [references/installation.md](references/installation.md) when neither command prefix can show CLI help.
+
+Stop and report the installation error when the installation instructions do not produce a working command prefix.
 
 Do not call alphaXiv REST or MCP endpoints directly and do not import private Python client methods.
 
