@@ -5,6 +5,7 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from contextlib import AsyncExitStack
 from contextlib import asynccontextmanager
+from contextlib import suppress
 from types import TracebackType
 from typing import Any
 from typing import Protocol
@@ -12,6 +13,7 @@ from typing import TypeGuard
 from typing import cast
 
 from mcp import ClientSession
+from mcp.client.sse import sse_client
 from mcp.client.streamable_http import create_mcp_http_client
 from mcp.client.streamable_http import streamable_http_client
 from pydantic import JsonValue
@@ -66,17 +68,18 @@ def _production_session(read_stream: object, write_stream: object) -> AbstractAs
 
 
 @asynccontextmanager
-async def _production_stream(url: str, *, headers: dict[str, str]) -> AsyncIterator[tuple[object, ...]]:
-    http_client = create_mcp_http_client(headers=headers)
-    http_client.follow_redirects = False
-    async with http_client:
-        preflight = await http_client.head(url)
-        if preflight.status_code in {401, 403}:
-            raise PermissionDeniedError("MCP authentication failed")
-        if preflight.status_code == 429:
-            raise RateLimitError("alphaXiv MCP rate limit or quota was exhausted")
-        async with streamable_http_client(url, http_client=http_client) as streams:
-            yield streams
+async def _production_streamable(url: str, *, headers: dict[str, str]) -> AsyncIterator[tuple[object, ...]]:
+    async with (
+        create_mcp_http_client(headers=headers) as http_client,
+        streamable_http_client(url, http_client=http_client) as streams,
+    ):
+        yield streams
+
+
+@asynccontextmanager
+async def _production_sse(url: str, *, headers: dict[str, str]) -> AsyncIterator[tuple[object, ...]]:
+    async with sse_client(url, headers=headers) as streams:
+        yield streams
 
 
 class McpClient:
@@ -85,7 +88,8 @@ class McpClient:
     def __init__(
         self,
         *,
-        _stream_factory: StreamFactory = _production_stream,
+        _stream_factory: StreamFactory | None = None,
+        _fallback_stream_factory: StreamFactory | None = None,
         _session_factory: SessionFactory = _production_session,
     ) -> None:
         api_key = os.getenv("ALPHAXIV_API_KEY", "").strip()
@@ -95,13 +99,19 @@ class McpClient:
         if len(api_key) > 1_000 or any(ord(character) < 33 or ord(character) == 127 for character in api_key):
             msg = "ALPHAXIV_API_KEY is invalid"
             raise InputError(msg)
+        using_production_stream = _stream_factory is None
         self._authorization = f"Bearer {api_key}"
-        self._stream_factory = _stream_factory
+        self._stream_factory = _stream_factory or _production_streamable
+        if using_production_stream:
+            self._fallback_stream_factory = _fallback_stream_factory or _production_sse
+        else:
+            self._fallback_stream_factory = _fallback_stream_factory
         self._session_factory = _session_factory
         self._stack: AsyncExitStack | None = None
         self._session: Session | None = None
         self._initialized = False
         self._closed = False
+        self._using_fallback = False
 
     async def __aenter__(self) -> "McpClient":
         if self._closed:
@@ -110,24 +120,22 @@ class McpClient:
         if self._stack is not None:
             msg = "MCP client already has a managed session"
             raise RuntimeError(msg)
-        stack = AsyncExitStack()
         try:
-            streams = await stack.enter_async_context(
-                self._stream_factory(MCP_ENDPOINT, headers={"Authorization": self._authorization})
-            )
-            if len(streams) < 2:
-                msg = "MCP transport did not provide read and write streams"
-                raise RuntimeError(msg)
-            session = await stack.enter_async_context(self._session_factory(streams[0], streams[1]))
+            await self._open_session(self._stream_factory)
         except BaseException as error:
-            await stack.aclose()
-            self._authorization = ""
-            self._closed = True
-            if isinstance(error, Exception):
-                raise self._map_exception(error, fallback="MCP connection failed") from error
-            raise
-        self._stack = stack
-        self._session = session
+            if isinstance(error, Exception) and self._can_fallback(error):
+                try:
+                    await self._open_fallback_session()
+                except BaseException as fallback_error:
+                    await self._mark_failed_connection()
+                    if isinstance(fallback_error, Exception):
+                        raise self._map_exception(fallback_error, fallback="MCP connection failed") from fallback_error
+                    raise
+            else:
+                await self._mark_failed_connection()
+                if isinstance(error, Exception):
+                    raise self._map_exception(error, fallback="MCP connection failed") from error
+                raise
         return self
 
     async def __aexit__(
@@ -136,37 +144,85 @@ class McpClient:
         _exc_value: BaseException | None,
         _traceback: TracebackType | None,
     ) -> None:
+        await self._close_session()
+        self._authorization = ""
+        self._closed = True
+
+    async def initialize(self) -> McpInitializeResult:
+        try:
+            initialized = await self._initialize_session()
+        except ValidationError as error:
+            raise InvalidResponseError.from_validation_error(error) from error
+        except Exception as error:
+            if not self._can_fallback(error):
+                raise self._map_exception(error, fallback="MCP initialization failed") from error
+            try:
+                with suppress(Exception):
+                    await self._close_session()
+                await self._open_fallback_session()
+                initialized = await self._initialize_session()
+            except ValidationError as fallback_error:
+                raise InvalidResponseError.from_validation_error(fallback_error) from fallback_error
+            except Exception as fallback_error:
+                raise self._map_exception(fallback_error, fallback="MCP initialization failed") from fallback_error
+        self._initialized = True
+        return initialized
+
+    async def _initialize_session(self) -> McpInitializeResult:
+        result = await self._managed_session().initialize()
+        server = self._attribute(result, "server_info", "serverInfo")
+        protocol_version = self._attribute(result, "protocol_version", "protocolVersion")
+        server_name = self._attribute(server, "name")
+        server_version = self._attribute(server, "version", default=None)
+        return McpInitializeResult(
+            protocol_version=str(protocol_version),
+            server_name=str(server_name),
+            server_version=str(server_version) if server_version is not None else None,
+        )
+
+    async def _open_session(self, stream_factory: StreamFactory) -> None:
+        stack = AsyncExitStack()
+        try:
+            streams = await stack.enter_async_context(
+                stream_factory(MCP_ENDPOINT, headers={"Authorization": self._authorization})
+            )
+            if len(streams) < 2:
+                msg = "MCP transport did not provide read and write streams"
+                raise RuntimeError(msg)
+            session = await stack.enter_async_context(self._session_factory(streams[0], streams[1]))
+        except BaseException:
+            await stack.aclose()
+            raise
+        self._stack = stack
+        self._session = session
+
+    async def _open_fallback_session(self) -> None:
+        stream_factory = self._fallback_stream_factory
+        if stream_factory is None:
+            msg = "MCP fallback transport is unavailable"
+            raise RuntimeError(msg)
+        self._fallback_stream_factory = None
+        self._using_fallback = True
+        await self._open_session(stream_factory)
+
+    async def _close_session(self) -> None:
         stack = self._stack
         self._session = None
         self._stack = None
-        self._authorization = ""
         self._initialized = False
-        self._closed = True
         if stack is not None:
             await stack.aclose()
 
-    async def initialize(self) -> McpInitializeResult:
-        session = self._managed_session()
-        try:
-            result = await session.initialize()
-            server = self._attribute(result, "server_info", "serverInfo")
-            protocol_version = self._attribute(result, "protocol_version", "protocolVersion")
-            server_name = self._attribute(server, "name")
-            server_version = self._attribute(server, "version", default=None)
-            initialized = McpInitializeResult(
-                protocol_version=str(protocol_version),
-                server_name=str(server_name),
-                server_version=str(server_version) if server_version is not None else None,
-            )
-        except ValidationError as error:
-            raise InvalidResponseError.from_validation_error(error) from error
-        except RemoteAPIError:
-            raise
-        except Exception as error:
-            raise self._map_exception(error, fallback="MCP initialization failed") from error
-        else:
-            self._initialized = True
-            return initialized
+    async def _mark_failed_connection(self) -> None:
+        await self._close_session()
+        self._authorization = ""
+        self._closed = True
+
+    def _can_fallback(self, error: Exception) -> bool:
+        if self._fallback_stream_factory is None or self._using_fallback or self._initialized:
+            return False
+        mapped = self._map_exception(error, fallback="MCP transport failed")
+        return not isinstance(mapped, InputError | InvalidResponseError | PermissionDeniedError | RateLimitError)
 
     async def list_tools(self) -> McpToolList:
         session = self._initialized_session()
