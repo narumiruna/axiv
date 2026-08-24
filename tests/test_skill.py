@@ -85,3 +85,5 @@ def test_skill_uses_only_cli_and_contains_required_safety_stops() -> None:
     assert "PublicRestClient" not in combined
     for required in ("--yes", "quota", "403", "breaking tool drift", "explicit user authorization"):
         assert required.lower() in combined.lower()
+    assert "first run `uv tool upgrade axiv` before diagnosing the error" in combined
+    assert "Do not automatically retry a quota-consuming command or remote library write after updating" in combined
