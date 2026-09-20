@@ -55,9 +55,6 @@ class DiscoverPapersArguments(McpArguments):
 
     @model_validator(mode="after")
     def validate_values(self) -> "DiscoverPapersArguments":
-        for keyword in self.keywords:
-            _reject_controls(keyword, label="keyword")
-        _reject_controls(self.question, label="question")
         if self.published_after and self.published_before and self.published_after > self.published_before:
             msg = "published_after must not be later than published_before"
             raise ValueError(msg)
@@ -81,13 +78,6 @@ class GetPaperContentArguments(McpArguments):
 class AnswerPdfQueriesArguments(McpArguments):
     paper: Identifier
     queries: Annotated[tuple[NonEmptyText, ...], Field(min_length=1, max_length=20)]
-
-    @model_validator(mode="after")
-    def validate_values(self) -> "AnswerPdfQueriesArguments":
-        _reject_controls(self.paper, label="paper")
-        for query in self.queries:
-            _reject_controls(query, label="query")
-        return self
 
 
 class GithubRepositoryArguments(McpArguments):

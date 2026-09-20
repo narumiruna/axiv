@@ -2,7 +2,13 @@ import copy
 import json
 from importlib.resources import files
 
+import pytest
+from pydantic import ValidationError
+
 from axiv.contracts.openapi import OpenAPIDocument
+from axiv.contracts.openapi import OpenAPIResponse
+from axiv.contracts.openapi import OpenAPISchema
+from axiv.contracts.openapi import SchemaFingerprint
 from axiv.contracts.openapi import check_openapi_document
 from axiv.openapi_check import load_packaged_baseline
 
@@ -79,3 +85,94 @@ def test_openapi_check_reports_response_schema_drift() -> None:
 
     assert report.compatible is False
     assert any(issue.kind == "response_schema" for issue in report.issues)
+
+
+@pytest.mark.parametrize("response_location", ["schema", "content"])
+@pytest.mark.parametrize(
+    ("baseline_schema", "candidate_schema", "compatible"),
+    [
+        pytest.param(
+            {},
+            {"type": None, "$ref": None, "required": [], "allOf": [], "items": None},
+            True,
+            id="explicit-defaults",
+        ),
+        pytest.param(
+            {"allOf": [{"$ref": "#/Example"}]},
+            {"all_of": [{"ref": "#/Example"}]},
+            True,
+            id="field-names-and-aliases",
+        ),
+        pytest.param(
+            {"type": "array", "items": {"allOf": [{"type": "object"}]}},
+            {
+                "type": "array",
+                "description": "ignored",
+                "items": {"allOf": [{"type": "object", "properties": {"future": {"type": "string"}}}]},
+            },
+            True,
+            id="ignored-additive-fields",
+        ),
+        pytest.param({"items": {}}, {"items": {"required": []}}, True, id="nested-defaults"),
+        pytest.param({"type": "object"}, {"type": "string"}, False, id="type-change"),
+        pytest.param({"$ref": "#/Example"}, {"$ref": "#/Changed"}, False, id="ref-change"),
+        pytest.param({"required": ["a", "b"]}, {"required": ["b", "a"]}, False, id="required-order"),
+        pytest.param(
+            {"allOf": [{"type": "object"}, {"$ref": "#/Example"}]},
+            {"allOf": [{"$ref": "#/Example"}, {"type": "object"}]},
+            False,
+            id="all-of-order",
+        ),
+        pytest.param(
+            {"items": {"required": ["a"]}},
+            {"items": {"required": ["b"]}},
+            False,
+            id="nested-items-change",
+        ),
+        pytest.param(
+            {"allOf": [{"items": {"$ref": "#/Example"}}]},
+            {"allOf": [{"items": {"$ref": "#/Changed"}}]},
+            False,
+            id="nested-all-of-change",
+        ),
+    ],
+)
+def test_schema_comparison_preserves_drift_policy(baseline_schema, candidate_schema, compatible, response_location):
+    path = "/papers/v3/{unresolved}/metrics"
+    baseline = load_packaged_baseline()
+    candidate = baseline.model_copy(deep=True)
+    baseline_operation = baseline.paths[path].get
+    candidate_operation = candidate.paths[path].get
+    assert baseline_operation is not None
+    assert candidate_operation is not None
+    baseline_operation.responses["200"] = OpenAPIResponse.model_validate({"schema": baseline_schema})
+    candidate_response = (
+        {"schema": candidate_schema}
+        if response_location == "schema"
+        else {"content": {"application/json": {"schema": candidate_schema}}}
+    )
+    candidate_operation.responses["200"] = OpenAPIResponse.model_validate(candidate_response)
+
+    report = check_openapi_document(candidate, baseline=baseline)
+
+    assert report.model_dump() == {
+        "compatible": compatible,
+        "checked_endpoints": 26,
+        "issues": []
+        if compatible
+        else [{"kind": "response_schema", "path": path, "detail": "HTTP 200 schema changed"}],
+    }
+
+
+def test_schema_fingerprint_remains_importable_and_preserves_conversion():
+    schema = OpenAPISchema.model_validate(
+        {"type": "array", "items": {"allOf": [{"$ref": "#/Example", "required": ["id"]}]}}
+    )
+    fingerprint = SchemaFingerprint.from_schema(schema)
+
+    assert fingerprint.model_dump() == schema.model_dump()
+    assert isinstance(fingerprint.items, SchemaFingerprint)
+    assert isinstance(fingerprint.items.all_of[0], SchemaFingerprint)
+    assert fingerprint.model_config["frozen"] is True
+    with pytest.raises(ValidationError):
+        SchemaFingerprint.model_validate({"unknown": True})

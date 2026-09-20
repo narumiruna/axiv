@@ -30,16 +30,11 @@ from axiv.models.paper import PaperMetrics
 from axiv.models.paper import PaperPreview
 from axiv.models.paper import PaperRecord
 from axiv.models.paper import RelatedKind
-from axiv.models.paper import ResolvedPaperIdentifiers
 from axiv.models.paper import SimilarPapers
 from axiv.output import render_table
 from axiv.output import render_text
 
 app = typer.Typer(help="Read public alphaXiv paper data.", no_args_is_help=True)
-
-
-def _identifiers(client: PublicRestClient, identifier: str) -> ResolvedPaperIdentifiers:
-    return ResolvedPaperIdentifiers.from_record(client.paper(identifier))
 
 
 def _json_human(model: BaseModel) -> Callable[[], None]:
@@ -145,8 +140,8 @@ def text(
 
     def operation() -> FullTextResponse:
         with PublicRestClient() as client:
-            ids = _identifiers(client, identifier)
-            result = client.paper_full_text(ids.version_id)
+            record = client.paper(identifier)
+            result = client.paper_full_text(record.version_id)
         if not any(item.page_number == page for item in result.pages):
             raise InputError(f"paper text does not contain page {page}")
         return result
@@ -170,10 +165,10 @@ def overview(
 
     def operation() -> OverviewResponse | OverviewStatus:
         with PublicRestClient() as client:
-            ids = _identifiers(client, identifier)
+            record = client.paper(identifier)
             if status:
-                return client.paper_overview_status(ids.version_id)
-            return client.paper_overview(ids.version_id, language)
+                return client.paper_overview_status(record.version_id)
+            return client.paper_overview(record.version_id, language)
 
     result = run_operation(operation)
     human = partial(render_text, result.overview) if isinstance(result, OverviewResponse) else _json_human(result)
@@ -195,20 +190,20 @@ def related(
                 return client.similar_papers(identifier, limit=limit)
             if kind is RelatedKind.METRICS:
                 return client.paper_metrics(identifier)
-            ids = _identifiers(client, identifier)
+            record = client.paper(identifier)
             if kind is RelatedKind.COMMENTS:
-                return client.paper_comments(ids.group_id)
+                return client.paper_comments(record.group_id)
             if kind is RelatedKind.FIGURES:
-                return client.paper_figures(ids.group_id)
+                return client.paper_figures(record.group_id)
             if kind is RelatedKind.EXTRAS:
-                return client.paper_extras(ids.group_id)
+                return client.paper_extras(record.group_id)
             if kind is RelatedKind.IMPLEMENTATIONS:
-                return client.paper_implementations(ids.group_id)
+                return client.paper_implementations(record.group_id)
             if kind is RelatedKind.AUTORESEARCH:
-                return client.autoresearch_implementations(ids.group_id)
+                return client.autoresearch_implementations(record.group_id)
             if kind is RelatedKind.AI_DETECTION:
-                return client.ai_detection(ids.version_id)
-            return client.model_links(ids.version_id)
+                return client.ai_detection(record.version_id)
+            return client.model_links(record.version_id)
 
     result = run_operation(operation)
     emit(result, json_output=json_output, human=lambda: _related_human(kind, result))

@@ -6,6 +6,7 @@ import pytest
 import axiv.clients.mcp as mcp_client_module
 from axiv.clients.mcp import McpClient
 from axiv.errors import InputError
+from axiv.errors import InvalidResponseError
 from axiv.errors import PermissionDeniedError
 from axiv.errors import RateLimitError
 from axiv.errors import RemoteAPIError
@@ -623,10 +624,11 @@ def test_authentication_status_is_mapped_without_remote_details(monkeypatch: pyt
     anyio.run(scenario)
 
 
-def test_plain_text_mutation_result_is_reported_without_retry_risk(monkeypatch: pytest.MonkeyPatch) -> None:
-    client, _, session, _ = make_client(monkeypatch)
+@pytest.mark.parametrize("text", ["Folder created", "{", "[]", "null", ""])
+def test_plain_text_mutation_result_is_reported_without_retry_risk(monkeypatch, text):
+    client, stream, session, _ = make_client(monkeypatch)
     session.results_by_tool["create_folder"] = SimpleNamespace(
-        content=[SimpleNamespace(type="text", text="Folder created")],
+        content=[SimpleNamespace(type="text", text=text)],
         isError=False,
         structuredContent=None,
     )
@@ -635,11 +637,112 @@ def test_plain_text_mutation_result_is_reported_without_retry_risk(monkeypatch: 
         async with client:
             await client.initialize()
             result = await client.create_folder(CreateFolderArguments(name="Reading"))
-        assert result.success is True
-        assert result.message == "Folder created"
-        assert result.details == {}
+        assert result.model_dump() == {
+            "action": "create_folder",
+            "success": True,
+            "target": "Reading",
+            "affected_count": None,
+            "message": text or None,
+            "details": {},
+        }
 
     anyio.run(scenario)
+
+    assert session.calls == [("create_folder", {"name": "Reading"})]
+    assert session.closed is True
+    assert stream.closed is True
+
+
+@pytest.mark.parametrize("structured_name", ["structured_content", "structuredContent"])
+@pytest.mark.parametrize("as_dict", [False, True])
+@pytest.mark.parametrize(
+    ("structured", "texts", "expected", "error_message"),
+    [
+        pytest.param({"count": 1}, ["not JSON"], {"count": 1}, None, id="structured-before-text"),
+        pytest.param({"count": 1}, ['{"count": 2}'], {"count": 1}, None, id="structured-conflict"),
+        pytest.param({}, ['{"count": 2}'], {"count": 2}, None, id="empty-structured-fallback"),
+        pytest.param([], ['{"count": 2}'], {"count": 2}, None, id="non-object-structured-fallback"),
+        pytest.param(None, ["{}"], {}, None, id="empty-object"),
+        pytest.param(None, ['{"folders":', "[]}"], {"folders": []}, None, id="multiple-text-blocks"),
+        pytest.param(None, ["Folder created"], {}, "MCP tool returned invalid JSON", id="plain-text"),
+        pytest.param(None, ["{"], {}, "MCP tool returned invalid JSON", id="malformed-json"),
+        pytest.param(None, [], {}, "MCP tool returned invalid JSON", id="no-text"),
+        pytest.param(None, ["[]"], {}, "MCP tool returned an invalid response", id="json-array"),
+        pytest.param(None, ["null"], {}, "MCP tool returned an invalid response", id="json-null"),
+        pytest.param(None, ['"text"'], {}, "MCP tool returned an invalid response", id="json-string"),
+    ],
+)
+def test_payload_decoders_preserve_precedence_and_error_policies(
+    structured_name, as_dict, structured, texts, expected, error_message
+):
+    blocks = [{"type": "image", "data": "ignored"}, *({"type": "text", "text": text} for text in texts)]
+    raw = {
+        structured_name: structured,
+        "content": blocks if as_dict else [SimpleNamespace(**block) for block in blocks],
+    }
+    result = raw if as_dict else SimpleNamespace(**raw)
+
+    assert McpClient._optional_result_payload(result) == expected
+    if error_message is None:
+        assert McpClient._result_payload(result) == expected
+    else:
+        with pytest.raises(InvalidResponseError) as captured:
+            McpClient._result_payload(result)
+        assert str(captured.value) == error_message
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("Folder created", "MCP tool returned invalid JSON"),
+        ("{", "MCP tool returned invalid JSON"),
+        ("[]", "MCP tool returned an invalid response"),
+        ("null", "MCP tool returned an invalid response"),
+        ("{}", "alphaXiv returned an invalid response"),
+    ],
+)
+def test_library_listing_rejects_invalid_payload_once_and_closes(monkeypatch, text, message):
+    client, stream, session, _ = make_client(monkeypatch)
+    session.call_result = {"content": [{"type": "text", "text": text}], "isError": False}
+
+    async def scenario():
+        with pytest.raises(InvalidResponseError) as captured:
+            async with client:
+                await client.initialize()
+                await client.list_library(ListLibraryArguments())
+        assert str(captured.value) == message
+
+    anyio.run(scenario)
+
+    assert session.calls == [("list_library", {})]
+    assert session.closed is True
+    assert stream.closed is True
+
+
+@pytest.mark.parametrize("failure", ["tool", "transport"])
+def test_mutation_failures_are_not_tolerated_or_retried(monkeypatch, failure):
+    class FailingSession(FakeSession):
+        async def call_tool(self, name, arguments):
+            self.calls.append((name, arguments))
+            if failure == "transport":
+                raise RuntimeError("interrupted")
+            return {"isError": True, "content": [{"type": "text", "text": "write failed"}]}
+
+    client, stream, session, _ = make_client(monkeypatch, session=FailingSession())
+
+    async def scenario():
+        with pytest.raises(RemoteAPIError) as captured:
+            async with client:
+                await client.initialize()
+                await client.create_folder(CreateFolderArguments(name="Reading"))
+        expected = "write failed" if failure == "tool" else "MCP tool create_folder failed"
+        assert str(captured.value) == expected
+
+    anyio.run(scenario)
+
+    assert session.calls == [("create_folder", {"name": "Reading"})]
+    assert session.closed is True
+    assert stream.closed is True
 
 
 @pytest.mark.parametrize(
