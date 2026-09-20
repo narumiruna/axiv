@@ -1,7 +1,5 @@
-from pydantic import Field
-
 from axiv.models.common import ExternalModel
-from axiv.models.common import StrictModel
+from axiv.models.common import ItemCollection
 
 
 class Event(ExternalModel):
@@ -14,6 +12,5 @@ class Event(ExternalModel):
     recording: str | None = None
 
 
-class EventsResponse(StrictModel):
-    items: list[Event]
-    count: int = Field(ge=0)
+class EventsResponse(ItemCollection[Event]):
+    pass

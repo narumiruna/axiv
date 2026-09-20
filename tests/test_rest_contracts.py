@@ -1,5 +1,5 @@
 import json
-from pathlib import Path
+from importlib.resources import files
 
 import pytest
 from pydantic import ValidationError
@@ -9,7 +9,7 @@ from axiv.contracts.rest import ENDPOINTS
 from axiv.contracts.rest import EndpointName
 from axiv.contracts.rest import RestEndpoint
 
-FIXTURE = Path(__file__).parent / "fixtures" / "openapi" / "alphaxiv-rest-subset.json"
+BASELINE = files("axiv").joinpath("resources/openapi-rest-subset.json")
 
 
 def test_static_contracts_are_get_only_anonymous_and_production_scoped() -> None:
@@ -30,7 +30,7 @@ def test_static_contract_rejects_undeclared_path_placeholder() -> None:
 
 
 def test_minimal_openapi_fixture_matches_static_paths_and_parameters() -> None:
-    document = json.loads(FIXTURE.read_text())
+    document = json.loads(BASELINE.read_text(encoding="utf-8"))
 
     assert set(document["paths"]) == {endpoint.path for endpoint in ENDPOINTS.values()}
     for endpoint in ENDPOINTS.values():
@@ -46,7 +46,7 @@ def test_minimal_openapi_fixture_matches_static_paths_and_parameters() -> None:
 
 
 def test_minimal_openapi_fixture_excludes_internal_and_mutating_content() -> None:
-    text = FIXTURE.read_text()
+    text = BASELINE.read_text(encoding="utf-8")
 
     for forbidden in (
         "Source file",

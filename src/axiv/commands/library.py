@@ -1,10 +1,9 @@
-import asyncio
 from typing import Annotated
 
 import typer
 
-from axiv.clients.mcp import McpClient
 from axiv.commands.common import emit
+from axiv.commands.common import run_mcp_operation
 from axiv.commands.common import run_operation
 from axiv.errors import InputError
 from axiv.models.library import LibraryListResult
@@ -26,48 +25,6 @@ app.add_typer(folder_app, name="folder")
 def _require_confirmation(yes: bool, *, target: str) -> None:
     if not yes:
         raise InputError(f"remote library write for {target} requires --yes")
-
-
-async def _list(arguments: ListLibraryArguments) -> LibraryListResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.list_library(arguments)
-
-
-async def _save(arguments: SavePapersArguments) -> LibraryMutationResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.save_papers(arguments)
-
-
-async def _remove(arguments: RemovePapersArguments) -> LibraryMutationResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.remove_papers(arguments)
-
-
-async def _move(arguments: MovePapersArguments) -> LibraryMutationResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.move_papers(arguments)
-
-
-async def _create(arguments: CreateFolderArguments) -> LibraryMutationResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.create_folder(arguments)
-
-
-async def _rename(arguments: RenameFolderArguments) -> LibraryMutationResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.rename_folder(arguments)
-
-
-async def _delete(arguments: DeleteFolderArguments) -> LibraryMutationResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.delete_folder(arguments)
 
 
 def _render_library(
@@ -138,7 +95,7 @@ def list_library(
 
     def operation() -> LibraryListResult:
         arguments = ListLibraryArguments(include_papers=include_papers, paper_ids_or_urls=tuple(paper or ()))
-        return asyncio.run(_list(arguments))
+        return run_mcp_operation(lambda client: client.list_library(arguments))
 
     result = run_operation(operation)
     emit(
@@ -164,7 +121,7 @@ def save(
     def operation() -> LibraryMutationResult:
         _require_confirmation(yes, target=f"folder {folder}")
         arguments = SavePapersArguments(folder_id=folder, paper_ids_or_urls=tuple(papers))
-        return asyncio.run(_save(arguments))
+        return run_mcp_operation(lambda client: client.save_papers(arguments))
 
     _emit_mutation(run_operation(operation), json_output=json_output)
 
@@ -181,7 +138,7 @@ def remove(
     def operation() -> LibraryMutationResult:
         _require_confirmation(yes, target=f"folder {folder}")
         arguments = RemovePapersArguments(folder_id=folder, paper_ids_or_urls=tuple(papers))
-        return asyncio.run(_remove(arguments))
+        return run_mcp_operation(lambda client: client.remove_papers(arguments))
 
     _emit_mutation(run_operation(operation), json_output=json_output)
 
@@ -203,7 +160,7 @@ def move(
             to_folder_id=target,
             paper_ids_or_urls=tuple(papers),
         )
-        return asyncio.run(_move(arguments))
+        return run_mcp_operation(lambda client: client.move_papers(arguments))
 
     _emit_mutation(run_operation(operation), json_output=json_output)
 
@@ -220,7 +177,7 @@ def create_folder(
     def operation() -> LibraryMutationResult:
         _require_confirmation(yes, target=f"new folder {name}")
         arguments = CreateFolderArguments(name=name, parent_folder_id=parent)
-        return asyncio.run(_create(arguments))
+        return run_mcp_operation(lambda client: client.create_folder(arguments))
 
     _emit_mutation(run_operation(operation), json_output=json_output)
 
@@ -237,7 +194,7 @@ def rename_folder(
     def operation() -> LibraryMutationResult:
         _require_confirmation(yes, target=f"folder {folder} as {name}")
         arguments = RenameFolderArguments(folder_id=folder, name=name)
-        return asyncio.run(_rename(arguments))
+        return run_mcp_operation(lambda client: client.rename_folder(arguments))
 
     _emit_mutation(run_operation(operation), json_output=json_output)
 
@@ -253,6 +210,6 @@ def delete_folder(
     def operation() -> LibraryMutationResult:
         _require_confirmation(yes, target=f"folder {folder} and its memberships")
         arguments = DeleteFolderArguments(folder_id=folder)
-        return asyncio.run(_delete(arguments))
+        return run_mcp_operation(lambda client: client.delete_folder(arguments))
 
     _emit_mutation(run_operation(operation), json_output=json_output)

@@ -106,7 +106,7 @@ class PublicRestClient:
             params={"q": self._query(query), "includePrivate": "false"},
         )
         items = self._parse_list(payload, PaperSearchResult)
-        return PaperSearchResults(items=items, count=len(items))
+        return PaperSearchResults.from_items(items)
 
     def search_full_text(self, query: str, *, limit: int = 10) -> FullTextSearchResults:
         limit = self._bounded(limit, maximum=self.MAX_PAGE_SIZE, name="limit")
@@ -115,12 +115,12 @@ class PublicRestClient:
             params={"q": self._query(query), "limit": str(limit)},
         )
         items = self._parse_list(payload, FullTextSearchResult)
-        return FullTextSearchResults(items=items, count=len(items))
+        return FullTextSearchResults.from_items(items)
 
     def search_rich_papers(self, query: str) -> SimilarPapers:
         payload = self._get_json(EndpointName.SEARCH_RICH, params={"q": self._query(query)})
         items = self._parse_list(payload, PaperPreview)
-        return SimilarPapers(items=items, count=len(items))
+        return SimilarPapers.from_items(items)
 
     def closest_topics(self, query: str) -> TopicSuggestions:
         payload = self._get_json(EndpointName.CLOSEST_TOPIC, params={"input": self._query(query)})
@@ -129,12 +129,12 @@ class PublicRestClient:
     def search_organizations(self, query: str) -> OrganizationResults:
         payload = self._get_json(EndpointName.SEARCH_ORGANIZATIONS, params={"q": self._query(query)})
         items = self._parse_list(payload, Organization)
-        return OrganizationResults(items=items, count=len(items))
+        return OrganizationResults.from_items(items)
 
     def top_organizations(self) -> OrganizationResults:
         payload = self._get_json(EndpointName.TOP_ORGANIZATIONS)
         items = self._parse_list(payload, Organization)
-        return OrganizationResults(items=items, count=len(items))
+        return OrganizationResults.from_items(items)
 
     def list_researchers(self, *, offset: int | None = None) -> ResearchersResponse:
         if offset is not None and not 0 <= offset <= 1_000_000:
@@ -151,7 +151,7 @@ class PublicRestClient:
     def list_events(self) -> EventsResponse:
         payload = self._get_json(EndpointName.LIST_EVENTS)
         items = self._parse_list(payload, Event)
-        return EventsResponse(items=items, count=len(items))
+        return EventsResponse.from_items(items)
 
     def feed(
         self,
@@ -216,7 +216,7 @@ class PublicRestClient:
     def paper_comments(self, group_id: str) -> PaperComments:
         payload = self._get_json(EndpointName.PAPER_COMMENTS, path_values={"group": group_id})
         items = self._parse_list(payload, PaperComment)
-        return PaperComments(items=items, count=len(items))
+        return PaperComments.from_items(items)
 
     def similar_papers(self, identifier: str, *, limit: int = 10) -> SimilarPapers:
         limit = self._bounded(limit, maximum=self.MAX_SIMILAR, name="limit")
@@ -226,7 +226,7 @@ class PublicRestClient:
             path_values={"id": identifier},
         )
         items = self._parse_list(payload, PaperPreview)
-        return SimilarPapers(items=items, count=len(items))
+        return SimilarPapers.from_items(items)
 
     def paper_metrics(self, identifier: str) -> PaperMetrics:
         return self._get_model(EndpointName.PAPER_METRICS, PaperMetrics, unresolved=identifier)

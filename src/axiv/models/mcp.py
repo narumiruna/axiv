@@ -10,8 +10,8 @@ from pydantic import StringConstraints
 from pydantic import field_validator
 from pydantic import model_validator
 
-from axiv.models.common import ExternalModel
 from axiv.models.common import StrictModel
+from axiv.sensitive import contains_sensitive_key
 
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)]
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
@@ -23,19 +23,6 @@ def _reject_controls(value: str, *, label: str) -> str:
         msg = f"{label} must not contain control characters"
         raise ValueError(msg)
     return value
-
-
-def _contains_sensitive_field(value: JsonValue) -> bool:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            normalized = key.lower().replace("_", "").replace("-", "")
-            if normalized.endswith(("apikey", "token", "secret", "cookie", "authorization")):
-                return True
-            if _contains_sensitive_field(item):
-                return True
-    if isinstance(value, list):
-        return any(_contains_sensitive_field(item) for item in value)
-    return False
 
 
 class McpArguments(StrictModel):
@@ -215,7 +202,7 @@ class McpTextResult(StrictModel):
     @field_validator("metadata")
     @classmethod
     def reject_sensitive_metadata(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        if _contains_sensitive_field(value):
+        if contains_sensitive_key(value):
             msg = "MCP metadata must not contain sensitive fields"
             raise ValueError(msg)
         return value
@@ -228,8 +215,3 @@ class AuthStatusResult(StrictModel):
     protocol_version: str | None = None
     server_name: str | None = None
     issue_count: int = Field(default=0, ge=0)
-
-
-class ExternalMcpContent(ExternalModel):
-    type: str
-    text: str | None = None

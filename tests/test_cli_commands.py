@@ -289,6 +289,30 @@ def test_related_human_output_is_bounded_summary(fake_client: FakeClient) -> Non
     assert len(result.stdout) < 1_000
 
 
+@pytest.mark.parametrize(
+    ("args", "method"),
+    [
+        (["search", "papers", "query"], "search_papers"),
+        (["search", "organizations", "query"], "search_organizations"),
+        (["events", "list"], "list_events"),
+    ],
+)
+def test_client_side_limit_preserves_items_and_recalculates_count(args, method, fake_client, monkeypatch):
+    original = getattr(fake_client, method)
+
+    def many(*arguments):
+        result = original(*arguments)
+        return type(result)(items=result.items * 3, count=3)
+
+    monkeypatch.setattr(fake_client, method, many)
+    result = runner.invoke(app, [*args, "--limit", "2", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert len(payload["items"]) == payload["count"] == 2
+    assert len(fake_client.calls) == 1
+
+
 def test_limits_are_rejected_before_client_call(fake_client: FakeClient) -> None:
     result = runner.invoke(app, ["feed", "list", "--limit", "51"])
 

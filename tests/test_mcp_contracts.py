@@ -17,13 +17,37 @@ def test_static_mcp_contracts_cover_exact_official_tool_surface() -> None:
     assert all(contract.model_config.get("frozen") for contract in MCP_TOOLS.values())
 
 
-def test_contracts_bind_fixed_argument_models_and_required_fields() -> None:
+def test_contracts_derive_required_fields_from_aliased_argument_schemas() -> None:
     discover = MCP_TOOLS[McpToolName.DISCOVER_PAPERS]
 
     assert discover.arguments_model is DiscoverPapersArguments
     assert discover.required_arguments == ("keywords", "question", "difficulty")
+    assert MCP_TOOLS[McpToolName.READ_GITHUB_FILES].required_arguments == ("githubUrl", "path")
+    for contract in MCP_TOOLS.values():
+        schema = contract.arguments_model.model_json_schema(by_alias=True)
+        assert contract.required_arguments == tuple(schema.get("required", ()))
     with pytest.raises(ValidationError):
         discover.arguments_model.model_validate({"question": "missing required fields"})
+
+
+@pytest.mark.parametrize(
+    ("name", "required"),
+    [
+        (McpToolName.DISCOVER_PAPERS, ("keywords", "question", "difficulty")),
+        (McpToolName.GET_PAPER_CONTENT, ("url",)),
+        (McpToolName.ANSWER_PDF_QUERIES, ("paper", "queries")),
+        (McpToolName.READ_GITHUB_FILES, ("githubUrl", "path")),
+        (McpToolName.LIST_LIBRARY, ()),
+        (McpToolName.SAVE_PAPERS, ("paper_ids_or_urls",)),
+        (McpToolName.REMOVE_PAPERS, ("paper_ids_or_urls", "folder_id")),
+        (McpToolName.MOVE_PAPERS, ("paper_ids_or_urls", "from_folder_id", "to_folder_id")),
+        (McpToolName.CREATE_FOLDER, ("name",)),
+        (McpToolName.RENAME_FOLDER, ("folder_id", "name")),
+        (McpToolName.DELETE_FOLDER, ("folder_id",)),
+    ],
+)
+def test_reviewed_required_argument_sets_remain_unchanged(name, required):
+    assert MCP_TOOLS[name].required_arguments == required
 
 
 def test_public_client_has_no_arbitrary_tool_or_endpoint_entrypoint() -> None:
