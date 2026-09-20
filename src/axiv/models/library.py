@@ -7,6 +7,7 @@ from pydantic import field_validator
 
 from axiv.models.common import ExternalModel
 from axiv.models.common import StrictModel
+from axiv.sensitive import contains_sensitive_key
 
 
 class ExternalLibraryPaper(ExternalModel):
@@ -127,16 +128,7 @@ class LibraryMutationResult(StrictModel):
     @field_validator("details")
     @classmethod
     def reject_sensitive_details(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        pending: list[JsonValue] = [value]
-        while pending:
-            current = pending.pop()
-            if isinstance(current, dict):
-                for key, item in current.items():
-                    normalized = key.lower().replace("_", "").replace("-", "")
-                    if normalized.endswith(("apikey", "token", "secret", "cookie", "authorization")):
-                        msg = "library result details must not contain sensitive fields"
-                        raise ValueError(msg)
-                    pending.append(item)
-            elif isinstance(current, list):
-                pending.extend(current)
+        if contains_sensitive_key(value):
+            msg = "library result details must not contain sensitive fields"
+            raise ValueError(msg)
         return value

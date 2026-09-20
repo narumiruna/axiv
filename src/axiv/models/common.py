@@ -1,4 +1,5 @@
 from typing import Literal
+from typing import Self
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -38,5 +39,5 @@ class ItemCollection[ItemT: BaseModel](StrictModel):
     count: int = Field(ge=0)
 
     @classmethod
-    def from_items(cls, items: list[ItemT]) -> "ItemCollection[ItemT]":
+    def from_items(cls, items: list[ItemT]) -> Self:
         return cls(items=items, count=len(items))

@@ -127,16 +127,30 @@ def test_mcp_outputs_never_have_an_api_key_field() -> None:
     serialized = status.model_dump_json() + result.model_dump_json()
     assert "axv-" not in serialized
     assert 'api_key"' not in serialized
+
+
+def test_mcp_outputs_preserve_safe_keys_and_scalar_values() -> None:
+    nested = {"data": [{"token_count": 2, "api_key_present": True, "secretary": None, "text": "Authorization"}]}
+    text = McpTextResult(tool="discover_papers", text="answer", metadata=nested)
+    mutation = LibraryMutationResult(action="create_folder", success=True, target="Reading", details=nested)
+
+    assert text.metadata == nested
+    assert mutation.details == nested
+
+
+@pytest.mark.parametrize(
+    "sensitive_key",
+    ["apiKey", "access_token", "client-secret", "sessionCookie", "Authorization"],
+)
+def test_mcp_outputs_reject_nested_sensitive_fields(sensitive_key: str) -> None:
+    nested = {"data": [{sensitive_key: "axv-private"}]}
+
     with pytest.raises(ValidationError):
-        McpTextResult(
-            tool="discover_papers",
-            text="answer",
-            metadata={"requestId": {"apiKey": "axv-private"}},
-        )
+        McpTextResult(tool="discover_papers", text="answer", metadata=nested)
     with pytest.raises(ValidationError):
         LibraryMutationResult(
             action="create_folder",
             success=True,
             target="Reading",
-            details={"data": {"access_token": "axv-private"}},
+            details=nested,
         )

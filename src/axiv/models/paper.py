@@ -6,6 +6,7 @@ from pydantic import JsonValue
 from pydantic import model_validator
 
 from axiv.models.common import ExternalModel
+from axiv.models.common import ItemCollection
 from axiv.models.common import StrictModel
 
 
@@ -112,14 +113,12 @@ class LegacyPaperResponse(ExternalModel):
     comments: list[PaperComment] = Field(default_factory=list)
 
 
-class PaperComments(StrictModel):
-    items: list[PaperComment]
-    count: int = Field(ge=0)
+class PaperComments(ItemCollection[PaperComment]):
+    pass
 
 
-class SimilarPapers(StrictModel):
-    items: list[PaperPreview]
-    count: int = Field(ge=0)
+class SimilarPapers(ItemCollection[PaperPreview]):
+    pass
 
 
 class PaperPage(ExternalModel):

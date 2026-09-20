@@ -1,10 +1,9 @@
-import asyncio
 from typing import Annotated
 
 import typer
 
-from axiv.clients.mcp import McpClient
 from axiv.commands.common import emit
+from axiv.commands.common import run_mcp_operation
 from axiv.commands.common import run_operation
 from axiv.models.mcp import DiscoverPapersArguments
 from axiv.models.mcp import DiscoverPrioritize
@@ -12,12 +11,6 @@ from axiv.models.mcp import McpTextResult
 from axiv.output import render_text
 
 app = typer.Typer(help="Run quota-consuming alphaXiv research tools.", no_args_is_help=True)
-
-
-async def _discover(arguments: DiscoverPapersArguments) -> McpTextResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.discover_papers(arguments)
 
 
 @app.command("discover")
@@ -49,7 +42,7 @@ def discover(
                 "prioritize": prioritize,
             }
         )
-        return asyncio.run(_discover(arguments))
+        return run_mcp_operation(lambda client: client.discover_papers(arguments))
 
     result = run_operation(operation)
     emit(result, json_output=json_output, human=lambda: render_text(result.text))

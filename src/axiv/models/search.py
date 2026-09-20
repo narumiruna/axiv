@@ -1,7 +1,7 @@
 from pydantic import Field
 
 from axiv.models.common import ExternalModel
-from axiv.models.common import StrictModel
+from axiv.models.common import ItemCollection
 
 
 class PaperSearchResult(ExternalModel):
@@ -11,9 +11,8 @@ class PaperSearchResult(ExternalModel):
     snippet: str | None = None
 
 
-class PaperSearchResults(StrictModel):
-    items: list[PaperSearchResult]
-    count: int = Field(ge=0)
+class PaperSearchResults(ItemCollection[PaperSearchResult]):
+    pass
 
 
 class FullTextSnippet(ExternalModel):
@@ -30,9 +29,8 @@ class FullTextSearchResult(ExternalModel):
     snippets: list[FullTextSnippet] = Field(default_factory=list)
 
 
-class FullTextSearchResults(StrictModel):
-    items: list[FullTextSearchResult]
-    count: int = Field(ge=0)
+class FullTextSearchResults(ItemCollection[FullTextSearchResult]):
+    pass
 
 
 class TopicSuggestions(ExternalModel):
@@ -46,6 +44,5 @@ class Organization(ExternalModel):
     image: str | None = None
 
 
-class OrganizationResults(StrictModel):
-    items: list[Organization]
-    count: int = Field(ge=0)
+class OrganizationResults(ItemCollection[Organization]):
+    pass

@@ -1,9 +1,12 @@
+import asyncio
+from collections.abc import Awaitable
 from collections.abc import Callable
 from contextvars import ContextVar
 
 import typer
 from pydantic import BaseModel
 
+from axiv.clients.mcp import McpClient
 from axiv.errors import AlphaXivError
 from axiv.errors import InputError
 from axiv.errors import RemoteAPIError
@@ -15,6 +18,17 @@ _DEBUG = ContextVar("axiv_debug", default=False)
 
 def set_debug(enabled: bool) -> None:
     _DEBUG.set(enabled)
+
+
+def run_mcp_operation[ModelT: BaseModel](
+    operation: Callable[[McpClient], Awaitable[ModelT]],
+) -> ModelT:
+    async def execute() -> ModelT:
+        async with McpClient() as client:
+            await client.initialize()
+            return await operation(client)
+
+    return asyncio.run(execute())
 
 
 def run_operation[ModelT: BaseModel](operation: Callable[[], ModelT]) -> ModelT:

@@ -4,7 +4,7 @@ from typing import Self
 import pytest
 from typer.testing import CliRunner
 
-import axiv.commands.library as library_command
+import axiv.commands.common as common_command
 from axiv.cli import app
 from axiv.models.library import LibraryFolder
 from axiv.models.library import LibraryListResult
@@ -26,6 +26,7 @@ runner = CliRunner()
 class FakeMcpClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
+        self.created = 0
 
     async def __aenter__(self) -> Self:
         return self
@@ -75,7 +76,12 @@ class FakeMcpClient:
 @pytest.fixture
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> FakeMcpClient:
     fake = FakeMcpClient()
-    monkeypatch.setattr(library_command, "McpClient", lambda: fake)
+
+    def create() -> FakeMcpClient:
+        fake.created += 1
+        return fake
+
+    monkeypatch.setattr(common_command, "McpClient", create)
     return fake
 
 
@@ -148,6 +154,7 @@ def test_every_write_requires_yes_before_opening_client(args: list[str], fake_cl
     assert result.exit_code == 2
     assert json.loads(result.stderr)["error"]["code"] == "invalid_input"
     assert "--yes" in result.stderr
+    assert fake_client.created == 0
     assert fake_client.calls == []
 
 
@@ -196,5 +203,6 @@ def test_confirmed_write_calls_only_expected_method_once(
 
     assert result.exit_code == 0
     assert json.loads(result.stdout)["success"] is True
+    assert fake_client.created == 1
     assert [name for name, _ in fake_client.calls] == ["initialize", expected_method, "close"]
     assert isinstance(fake_client.calls[1][1], argument_type)

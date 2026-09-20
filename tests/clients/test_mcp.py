@@ -492,6 +492,41 @@ def test_authentication_and_rate_limit_failures_do_not_fallback(
     assert fallback_calls == 0
 
 
+def test_fallback_initialization_failure_is_terminal_and_closes_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingSession(FakeSession):
+        async def initialize(self) -> object:
+            self.initialize_calls += 1
+            raise RuntimeError("initialization failed")
+
+    streams = [FakeStreamContext(), FakeStreamContext()]
+    sessions = [FailingSession(), FailingSession()]
+    session_contexts = iter(FakeSessionContext(session) for session in sessions)
+    fallback_calls = []
+
+    def fallback_factory(_url: str, *, headers: dict[str, str]) -> FakeStreamContext:
+        fallback_calls.append(headers)
+        return streams[1]
+
+    monkeypatch.setenv("ALPHAXIV_API_KEY", "axv-test-secret")
+    client = McpClient(
+        _stream_factory=lambda _url, headers: streams[0],
+        _fallback_stream_factory=fallback_factory,
+        _session_factory=lambda _read, _write: next(session_contexts),
+    )
+
+    async def scenario() -> None:
+        with pytest.raises(RemoteAPIError, match="MCP initialization failed"):
+            async with client:
+                await client.initialize()
+
+    anyio.run(scenario)
+
+    assert len(fallback_calls) == 1
+    assert all(session.initialize_calls == 1 and session.closed for session in sessions)
+    assert all(stream.closed for stream in streams)
+    assert all(session.calls == [] for session in sessions)
+
+
 def test_tool_failure_is_not_retried_on_fallback_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     class FailingCallSession(FakeSession):
         async def call_tool(self, name: str, arguments: dict[str, object]) -> object:
@@ -607,12 +642,19 @@ def test_plain_text_mutation_result_is_reported_without_retry_risk(monkeypatch: 
     anyio.run(scenario)
 
 
-def test_nested_sensitive_text_metadata_is_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "sensitive_key",
+    ["apiKey", "access_token", "client-secret", "sessionCookie", "Authorization"],
+)
+def test_nested_sensitive_text_metadata_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive_key: str,
+) -> None:
     client, _, session, _ = make_client(monkeypatch)
     session.call_result = SimpleNamespace(
         content=[SimpleNamespace(type="text", text="result")],
         isError=False,
-        structuredContent={"requestId": {"apiKey": "axv-private", "id": "request-1"}},
+        structuredContent={"requestId": {sensitive_key: "axv-private", "id": "request-1"}},
     )
 
     async def scenario() -> None:
@@ -627,12 +669,19 @@ def test_nested_sensitive_text_metadata_is_removed(monkeypatch: pytest.MonkeyPat
     anyio.run(scenario)
 
 
-def test_nested_sensitive_mutation_details_are_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "sensitive_key",
+    ["apiKey", "access_token", "client-secret", "sessionCookie", "Authorization"],
+)
+def test_nested_sensitive_mutation_details_are_removed(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive_key: str,
+) -> None:
     client, _, session, _ = make_client(monkeypatch)
     session.results_by_tool["create_folder"] = SimpleNamespace(
         content=[],
         isError=False,
-        structuredContent={"count": 1, "data": {"apiKey": "axv-private", "folder_id": "folder-1"}},
+        structuredContent={"count": 1, "data": [{sensitive_key: "axv-private", "folder_id": "folder-1"}]},
     )
 
     async def scenario() -> None:
@@ -640,7 +689,7 @@ def test_nested_sensitive_mutation_details_are_removed(monkeypatch: pytest.Monke
             await client.initialize()
             result = await client.create_folder(CreateFolderArguments(name="Reading"))
         assert "axv-private" not in result.model_dump_json()
-        assert result.details == {"count": 1, "data": {"folder_id": "folder-1"}}
+        assert result.details == {"count": 1, "data": [{"folder_id": "folder-1"}]}
 
     anyio.run(scenario)
 

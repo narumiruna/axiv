@@ -4,8 +4,7 @@ from typing import Self
 import pytest
 from typer.testing import CliRunner
 
-import axiv.commands.paper as paper_command
-import axiv.commands.research as research_command
+import axiv.commands.common as common_command
 from axiv.cli import app
 from axiv.errors import RateLimitError
 from axiv.models.mcp import AnswerPdfQueriesArguments
@@ -55,8 +54,7 @@ class FakeMcpClient:
 @pytest.fixture
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> FakeMcpClient:
     fake = FakeMcpClient()
-    monkeypatch.setattr(research_command, "McpClient", lambda: fake)
-    monkeypatch.setattr(paper_command, "McpClient", lambda: fake)
+    monkeypatch.setattr(common_command, "McpClient", lambda: fake)
     return fake
 
 
@@ -104,6 +102,7 @@ def test_discover_validates_explicit_options_and_emits_json(fake_client: FakeMcp
     assert arguments.difficulty == 6
     assert arguments.published_after is not None
     assert arguments.published_after.isoformat() == "2017-01-01"
+    assert [name for name, _ in fake_client.calls] == ["initialize", "discover_papers", "close"]
 
 
 def test_paper_content_normalizes_arxiv_id_and_preserves_full_text(fake_client: FakeMcpClient) -> None:
@@ -114,6 +113,7 @@ def test_paper_content_normalizes_arxiv_id_and_preserves_full_text(fake_client: 
     assert isinstance(arguments, GetPaperContentArguments)
     assert str(arguments.url) == "https://arxiv.org/abs/1706.03762"
     assert arguments.full_text is True
+    assert [name for name, _ in fake_client.calls] == ["initialize", "get_paper_content", "close"]
 
 
 def test_paper_query_batches_repeated_queries_in_one_call(fake_client: FakeMcpClient) -> None:
@@ -135,7 +135,7 @@ def test_paper_query_batches_repeated_queries_in_one_call(fake_client: FakeMcpCl
     arguments = fake_client.calls[1][1]
     assert isinstance(arguments, AnswerPdfQueriesArguments)
     assert arguments.queries == ("What datasets were used?", "What limitations are listed?")
-    assert [name for name, _ in fake_client.calls].count("answer_pdf_queries") == 1
+    assert [name for name, _ in fake_client.calls] == ["initialize", "answer_pdf_queries", "close"]
 
 
 def test_paper_code_uses_validated_github_repository_and_path(fake_client: FakeMcpClient) -> None:
@@ -149,6 +149,7 @@ def test_paper_code_uses_validated_github_repository_and_path(fake_client: FakeM
     assert isinstance(arguments, GithubRepositoryArguments)
     assert str(arguments.github_url) == "https://github.com/owner/repo"
     assert arguments.path == "src/model.py"
+    assert [name for name, _ in fake_client.calls] == ["initialize", "read_files_from_github_repository", "close"]
 
 
 def test_research_validation_and_quota_errors_are_stable(fake_client: FakeMcpClient) -> None:
@@ -167,6 +168,7 @@ def test_research_validation_and_quota_errors_are_stable(fake_client: FakeMcpCli
 
     assert quota.exit_code == 5
     assert json.loads(quota.stderr)["error"]["code"] == "rate_limited"
+    assert [name for name, _ in fake_client.calls] == ["initialize", "discover_papers", "close"]
 
 
 def test_research_human_output_prints_complete_text(fake_client: FakeMcpClient) -> None:

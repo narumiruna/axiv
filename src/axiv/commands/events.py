@@ -21,8 +21,7 @@ def list_events(
     def operation() -> EventsResponse:
         with PublicRestClient() as client:
             result = client.list_events()
-        items = result.items[:limit]
-        return EventsResponse(items=items, count=len(items))
+        return EventsResponse.from_items(result.items[:limit])
 
     result = run_operation(operation)
     emit(

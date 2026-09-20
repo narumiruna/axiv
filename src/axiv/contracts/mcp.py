@@ -55,7 +55,11 @@ class McpToolContract(StrictModel):
     access: McpAccess
     quota: McpQuota
     arguments_model: type[McpArguments]
-    required_arguments: tuple[str, ...]
+
+    @property
+    def required_arguments(self) -> tuple[str, ...]:
+        schema = self.arguments_model.model_json_schema(by_alias=True)
+        return tuple(schema.get("required", ()))
 
     @property
     def argument_names(self) -> tuple[str, ...]:
@@ -70,14 +74,12 @@ def _contract(
     *,
     access: McpAccess = McpAccess.READ,
     quota: McpQuota = McpQuota.NONE,
-    required: tuple[str, ...] = (),
 ) -> McpToolContract:
     return McpToolContract(
         name=name,
         access=access,
         quota=quota,
         arguments_model=arguments_model,
-        required_arguments=required,
     )
 
 
@@ -86,62 +88,52 @@ _CONTRACTS = (
         McpToolName.DISCOVER_PAPERS,
         DiscoverPapersArguments,
         quota=McpQuota.ASSISTANT,
-        required=("keywords", "question", "difficulty"),
     ),
     _contract(
         McpToolName.GET_PAPER_CONTENT,
         GetPaperContentArguments,
         quota=McpQuota.ASSISTANT,
-        required=("url",),
     ),
     _contract(
         McpToolName.ANSWER_PDF_QUERIES,
         AnswerPdfQueriesArguments,
         quota=McpQuota.ASSISTANT,
-        required=("paper", "queries"),
     ),
     _contract(
         McpToolName.READ_GITHUB_FILES,
         GithubRepositoryArguments,
         quota=McpQuota.ASSISTANT,
-        required=("githubUrl", "path"),
     ),
     _contract(McpToolName.LIST_LIBRARY, ListLibraryArguments),
     _contract(
         McpToolName.SAVE_PAPERS,
         SavePapersArguments,
         access=McpAccess.WRITE,
-        required=("paper_ids_or_urls",),
     ),
     _contract(
         McpToolName.REMOVE_PAPERS,
         RemovePapersArguments,
         access=McpAccess.WRITE,
-        required=("paper_ids_or_urls", "folder_id"),
     ),
     _contract(
         McpToolName.MOVE_PAPERS,
         MovePapersArguments,
         access=McpAccess.WRITE,
-        required=("paper_ids_or_urls", "from_folder_id", "to_folder_id"),
     ),
     _contract(
         McpToolName.CREATE_FOLDER,
         CreateFolderArguments,
         access=McpAccess.WRITE,
-        required=("name",),
     ),
     _contract(
         McpToolName.RENAME_FOLDER,
         RenameFolderArguments,
         access=McpAccess.WRITE,
-        required=("folder_id", "name"),
     ),
     _contract(
         McpToolName.DELETE_FOLDER,
         DeleteFolderArguments,
         access=McpAccess.WRITE,
-        required=("folder_id",),
     ),
 )
 

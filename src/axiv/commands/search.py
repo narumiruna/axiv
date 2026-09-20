@@ -25,8 +25,7 @@ def papers(
     def operation() -> PaperSearchResults:
         with PublicRestClient() as client:
             result = client.search_papers(query)
-        items = result.items[:limit]
-        return PaperSearchResults(items=items, count=len(items))
+        return PaperSearchResults.from_items(result.items[:limit])
 
     result = run_operation(operation)
     emit(
@@ -98,8 +97,7 @@ def organizations(
     def operation() -> OrganizationResults:
         with PublicRestClient() as client:
             result = client.search_organizations(query)
-        items = result.items[:limit]
-        return OrganizationResults(items=items, count=len(items))
+        return OrganizationResults.from_items(result.items[:limit])
 
     result = run_operation(operation)
     emit(

@@ -1,22 +1,23 @@
 import copy
 import json
-from pathlib import Path
+from importlib.resources import files
 
 from axiv.contracts.openapi import OpenAPIDocument
 from axiv.contracts.openapi import check_openapi_document
 from axiv.openapi_check import load_packaged_baseline
 
-FIXTURE = Path(__file__).parent / "fixtures" / "openapi" / "alphaxiv-rest-subset.json"
+BASELINE = files("axiv").joinpath("resources/openapi-rest-subset.json")
 
 
 def load_fixture() -> dict[str, object]:
-    return json.loads(FIXTURE.read_text())
+    return json.loads(BASELINE.read_text(encoding="utf-8"))
 
 
-def test_packaged_openapi_baseline_matches_test_fixture() -> None:
-    fixture = OpenAPIDocument.model_validate(load_fixture())
+def test_packaged_openapi_baseline_loads_all_reviewed_endpoints() -> None:
+    baseline = load_packaged_baseline()
 
-    assert load_packaged_baseline() == fixture
+    assert len(baseline.paths) == 26
+    assert baseline.paths["/events/v1"].get is not None
 
 
 def test_openapi_fixture_is_compatible_with_static_contracts() -> None:

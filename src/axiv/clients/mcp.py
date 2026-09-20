@@ -48,6 +48,7 @@ from axiv.models.mcp import MovePapersArguments
 from axiv.models.mcp import RemovePapersArguments
 from axiv.models.mcp import RenameFolderArguments
 from axiv.models.mcp import SavePapersArguments
+from axiv.sensitive import is_sensitive_key
 
 
 class Session(Protocol):
@@ -111,7 +112,6 @@ class McpClient:
         self._session: Session | None = None
         self._initialized = False
         self._closed = False
-        self._using_fallback = False
 
     async def __aenter__(self) -> "McpClient":
         if self._closed:
@@ -202,7 +202,6 @@ class McpClient:
             msg = "MCP fallback transport is unavailable"
             raise RuntimeError(msg)
         self._fallback_stream_factory = None
-        self._using_fallback = True
         await self._open_session(stream_factory)
 
     async def _close_session(self) -> None:
@@ -219,7 +218,7 @@ class McpClient:
         self._closed = True
 
     def _can_fallback(self, error: Exception) -> bool:
-        if self._fallback_stream_factory is None or self._using_fallback or self._initialized:
+        if self._fallback_stream_factory is None or self._initialized:
             return False
         mapped = self._map_exception(error, fallback="MCP transport failed")
         return not isinstance(mapped, InputError | InvalidResponseError | PermissionDeniedError | RateLimitError)
@@ -407,7 +406,7 @@ class McpClient:
         if isinstance(value, dict):
             sanitized: dict[str, JsonValue] = {}
             for key, item in value.items():
-                if isinstance(key, str) and not cls._sensitive_key(key):
+                if isinstance(key, str) and not is_sensitive_key(key):
                     sanitized[key] = cls._sanitize_json(item)
             return sanitized
         if isinstance(value, list | tuple):
@@ -415,11 +414,6 @@ class McpClient:
         if isinstance(value, str | int | float | bool) or value is None:
             return value
         return str(value)[:500]
-
-    @staticmethod
-    def _sensitive_key(key: str) -> bool:
-        normalized = key.lower().replace("_", "").replace("-", "")
-        return normalized.endswith(("apikey", "token", "secret", "cookie", "authorization"))
 
     @staticmethod
     def _affected_count(payload: dict[str, object]) -> int | None:

@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import Callable
 from functools import partial
 from typing import Annotated
@@ -7,9 +6,9 @@ from urllib.parse import quote
 import typer
 from pydantic import BaseModel
 
-from axiv.clients.mcp import McpClient
 from axiv.clients.public_rest import PublicRestClient
 from axiv.commands.common import emit
+from axiv.commands.common import run_mcp_operation
 from axiv.commands.common import run_operation
 from axiv.errors import InputError
 from axiv.models.mcp import AnswerPdfQueriesArguments
@@ -52,24 +51,6 @@ def _paper_url(identifier: str) -> str:
         return identifier
     valid = PaperIdentifier(value=identifier).value
     return f"https://arxiv.org/abs/{quote(valid, safe='/')}"
-
-
-async def _paper_content(arguments: GetPaperContentArguments) -> McpTextResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.get_paper_content(arguments)
-
-
-async def _paper_queries(arguments: AnswerPdfQueriesArguments) -> McpTextResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.answer_pdf_queries(arguments)
-
-
-async def _github_files(arguments: GithubRepositoryArguments) -> McpTextResult:
-    async with McpClient() as client:
-        await client.initialize()
-        return await client.read_github_files(arguments)
 
 
 def _related_human(kind: RelatedKind, model: BaseModel) -> None:
@@ -243,7 +224,7 @@ def content(
 
     def operation() -> McpTextResult:
         arguments = GetPaperContentArguments(url=_paper_url(identifier), fullText=full_text)
-        return asyncio.run(_paper_content(arguments))
+        return run_mcp_operation(lambda client: client.get_paper_content(arguments))
 
     result = run_operation(operation)
     emit(result, json_output=json_output, human=lambda: render_text(result.text))
@@ -262,7 +243,7 @@ def query_paper(
 
     def operation() -> McpTextResult:
         arguments = AnswerPdfQueriesArguments(paper=identifier, queries=tuple(query or ()))
-        return asyncio.run(_paper_queries(arguments))
+        return run_mcp_operation(lambda client: client.answer_pdf_queries(arguments))
 
     result = run_operation(operation)
     emit(result, json_output=json_output, human=lambda: render_text(result.text))
@@ -278,7 +259,7 @@ def code(
 
     def operation() -> McpTextResult:
         arguments = GithubRepositoryArguments(githubUrl=repository, path=path)
-        return asyncio.run(_github_files(arguments))
+        return run_mcp_operation(lambda client: client.read_github_files(arguments))
 
     result = run_operation(operation)
     emit(result, json_output=json_output, human=lambda: render_text(result.text))
