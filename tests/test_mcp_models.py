@@ -14,6 +14,7 @@ from axiv.models.mcp import CreateFolderArguments
 from axiv.models.mcp import DiscoverPapersArguments
 from axiv.models.mcp import GithubRepositoryArguments
 from axiv.models.mcp import McpTextResult
+from axiv.models.mcp import RenameFolderArguments
 from axiv.models.mcp import SavePapersArguments
 
 
@@ -35,6 +36,85 @@ def test_discover_arguments_validate_bounds_dates_and_alias_serialization() -> N
     }
     with pytest.raises(ValidationError):
         DiscoverPapersArguments(keywords=("attention",), question="Question", difficulty=11)
+
+
+@pytest.mark.parametrize("control", [*range(32), 127])
+@pytest.mark.parametrize(
+    ("model", "values", "field"),
+    [
+        (DiscoverPapersArguments, {"keywords": ("topic",), "question": "Question", "difficulty": 5}, "keywords"),
+        (DiscoverPapersArguments, {"keywords": ("topic",), "question": "Question", "difficulty": 5}, "question"),
+        (AnswerPdfQueriesArguments, {"paper": "paper", "queries": ("Question",)}, "paper"),
+        (AnswerPdfQueriesArguments, {"paper": "paper", "queries": ("Question",)}, "queries"),
+    ],
+)
+def test_research_control_errors_preserve_messages_and_locations(model, values, field, control):
+    invalid = f"a{chr(control)}b"
+    payload = {**values, field: ("valid", invalid) if isinstance(values[field], tuple) else invalid}
+
+    with pytest.raises(ValidationError) as captured:
+        model.model_validate(payload)
+
+    assert captured.value.errors(include_url=False, include_context=False) == [
+        {
+            "type": "value_error",
+            "loc": (),
+            "msg": f"Value error, {field} must not contain control characters",
+            "input": payload,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("after", "before", "valid"),
+    [
+        (None, None, True),
+        ("2026-01-01", None, True),
+        (None, "2026-01-01", True),
+        ("2026-01-01", "2026-01-01", True),
+        ("2026-01-01", "2026-02-01", True),
+        ("2026-02-01", "2026-01-01", False),
+    ],
+)
+def test_discovery_date_range_validation_remains_independent(after, before, valid):
+    payload = {
+        "keywords": (" topic ",),
+        "question": " Question ",
+        "difficulty": 5,
+        "published_after": after,
+        "published_before": before,
+    }
+    if valid:
+        result = DiscoverPapersArguments.model_validate(payload)
+        assert result.keywords == ("topic",)
+        assert result.question == "Question"
+    else:
+        with pytest.raises(ValidationError) as captured:
+            DiscoverPapersArguments.model_validate(payload)
+        assert captured.value.errors(include_url=False, include_context=False) == [
+            {
+                "type": "value_error",
+                "loc": (),
+                "msg": "Value error, published_after must not be later than published_before",
+                "input": payload,
+            }
+        ]
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "field", "label"),
+    [
+        (GithubRepositoryArguments, {"githubUrl": "https://github.com/owner/repo", "path": "a\u001bb"}, "path", "path"),
+        (CreateFolderArguments, {"name": "a\u001bb"}, "name", "folder name"),
+        (RenameFolderArguments, {"folder_id": "folder", "name": "a\u001bb"}, "name", "folder name"),
+    ],
+)
+def test_control_field_validators_preserve_error_precedence(model, payload, field, label):
+    with pytest.raises(ValidationError) as captured:
+        model.model_validate(payload)
+    error = captured.value.errors()[0]
+    assert error["loc"] == (field,)
+    assert error["msg"] == f"Value error, {label} must not contain control characters"
 
 
 def test_research_arguments_reject_empty_or_unsafe_values() -> None:

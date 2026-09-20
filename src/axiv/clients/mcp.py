@@ -375,14 +375,10 @@ class McpClient:
 
     @classmethod
     def _optional_result_payload(cls, result: object) -> dict[str, object]:
-        structured = cls._attribute(result, "structured_content", "structuredContent", default=None)
-        if isinstance(structured, dict) and structured:
-            return structured
         try:
-            payload = json.loads(cls._result_text(result))
-        except ValueError:
+            return cls._result_payload(result)
+        except InvalidResponseError:
             return {}
-        return payload if isinstance(payload, dict) else {}
 
     @classmethod
     def _safe_metadata(cls, result: object) -> dict[str, JsonValue]:

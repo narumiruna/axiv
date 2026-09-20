@@ -146,9 +146,7 @@ def check_openapi_document(
         if candidate_response is None or baseline_response is None:
             issues.append(DriftIssue(kind="response_schema", path=endpoint.path, detail="HTTP 200 schema is missing"))
             continue
-        actual_schema = SchemaFingerprint.from_schema(candidate_response.json_schema())
-        expected_schema = SchemaFingerprint.from_schema(baseline_response.json_schema())
-        if actual_schema != expected_schema:
+        if candidate_response.json_schema() != baseline_response.json_schema():
             issues.append(DriftIssue(kind="response_schema", path=endpoint.path, detail="HTTP 200 schema changed"))
 
     return OpenAPIDriftReport(

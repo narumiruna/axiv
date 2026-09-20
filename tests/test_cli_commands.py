@@ -47,6 +47,7 @@ runner = CliRunner()
 class FakeClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
+        self.closed = False
         self.record = PaperRecord(
             type="public",
             groupId="group-id",
@@ -70,7 +71,7 @@ class FakeClient:
         return self
 
     def __exit__(self, *_args: object) -> None:
-        return None
+        self.closed = True
 
     def search_papers(self, query: str) -> PaperSearchResults:
         self.calls.append(("search_papers", query))
@@ -256,29 +257,81 @@ def test_read_commands_return_json_and_call_fixed_client_method(
     assert expected_call in [call[0] for call in fake_client.calls]
 
 
+@pytest.mark.parametrize("json_output", [False, True])
 @pytest.mark.parametrize(
-    ("kind", "expected_call"),
+    ("kind", "method", "argument", "payload", "summary"),
     [
-        ("comments", "paper_comments"),
-        ("similar", "similar_papers"),
-        ("metrics", "paper_metrics"),
-        ("figures", "paper_figures"),
-        ("extras", "paper_extras"),
-        ("implementations", "paper_implementations"),
-        ("autoresearch", "autoresearch_implementations"),
-        ("ai-detection", "ai_detection"),
-        ("model-links", "model_links"),
+        ("comments", "paper_comments", "group-id", {"items": [], "count": 0}, "0 items"),
+        ("similar", "similar_papers", ("1706.03762", 3), None, "1 items"),
+        (
+            "metrics",
+            "paper_metrics",
+            "1706.03762",
+            {"comments_count": 1, "public_total_votes": 2, "visits_all": 3},
+            "3 visits, 1 comments",
+        ),
+        ("figures", "paper_figures", "group-id", {"figures": ["figure.png"]}, "1 figures"),
+        (
+            "extras",
+            "paper_extras",
+            "group-id",
+            {"links": [], "repo_url": None, "autoresearch": False, "featured_tweets": None},
+            "No repository",
+        ),
+        (
+            "implementations",
+            "paper_implementations",
+            "group-id",
+            {"alphaxiv_implementations": [], "paper_resources": []},
+            "0 implementations",
+        ),
+        ("autoresearch", "autoresearch_implementations", "group-id", {"implementations": []}, "0 implementations"),
+        (
+            "ai-detection",
+            "ai_detection",
+            "version-id",
+            {
+                "state": "done",
+                "fraction_ai": 0,
+                "fraction_ai_assisted": 0,
+                "fraction_human": 1,
+                "prediction_short": "Human",
+                "headline": None,
+                "windows": [],
+                "updated_at": 1,
+            },
+            "done: No headline",
+        ),
+        (
+            "model-links",
+            "model_links",
+            "version-id",
+            {"state": "done", "matches": [], "updated_at": 1, "is_outdated": False},
+            "done: 0 matches",
+        ),
     ],
 )
 def test_related_kind_dispatches_only_to_static_methods(
-    kind: str,
-    expected_call: str,
-    fake_client: FakeClient,
-) -> None:
-    result = runner.invoke(app, ["paper", "related", "1706.03762", "--kind", kind, "--json"])
+    kind, method, argument, payload, summary, json_output, fake_client
+):
+    flags = ["--json"] if json_output else []
+    result = runner.invoke(app, ["paper", "related", "1706.03762", "--kind", kind, "--limit", "3", *flags])
 
     assert result.exit_code == 0
-    assert expected_call in [call[0] for call in fake_client.calls]
+    assert result.stderr == ""
+    lookup = [] if kind in {"similar", "metrics"} else [("paper", "1706.03762")]
+    assert fake_client.calls == [*lookup, (method, argument)]
+    assert fake_client.closed is True
+    if json_output:
+        expected = (
+            {"items": [fake_client.preview.model_dump(mode="json")], "count": 1} if kind == "similar" else payload
+        )
+        assert json.loads(result.stdout) == expected
+    else:
+        assert "Related paper data" in result.stdout
+        assert kind in result.stdout
+        assert summary in result.stdout
+        assert len(result.stdout) < 1_000
 
 
 def test_related_human_output_is_bounded_summary(fake_client: FakeClient) -> None:
@@ -358,3 +411,111 @@ def test_text_human_output_defaults_to_one_page(fake_client: FakeClient) -> None
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "Page one"
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize(
+    ("args", "call", "payload", "human"),
+    [
+        (
+            ["text"],
+            ("paper_full_text", "version-id"),
+            {"pages": [{"page_number": 1, "text": "Page one"}]},
+            "Page one",
+        ),
+        (
+            ["overview"],
+            ("paper_overview", ("version-id", "en")),
+            {
+                "title": "Attention",
+                "abstract": "Abstract",
+                "summary": None,
+                "overview": "Overview",
+                "intermediate_report": None,
+                "citations": [],
+                "summary_section_titles": {},
+                "overview_section_titles": {},
+            },
+            "Overview",
+        ),
+        (
+            ["overview", "--status"],
+            ("paper_overview_status", "version-id"),
+            {"state": "done", "updated_at": 1, "translations": {}},
+            None,
+        ),
+    ],
+)
+def test_text_and_overview_preserve_routing_and_output(args, call, payload, human, json_output, fake_client):
+    flags = ["--json"] if json_output else []
+    result = runner.invoke(app, ["paper", *args, "1706.03762", *flags])
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert fake_client.calls == [("paper", "1706.03762"), call]
+    assert fake_client.closed is True
+    if json_output or human is None:
+        assert json.loads(result.stdout) == payload
+    else:
+        assert result.stdout == f"{human}\n"
+
+
+def test_overview_passes_language_with_resolved_version(fake_client):
+    result = runner.invoke(app, ["paper", "overview", "1706.03762", "--language", "fr", "--json"])
+
+    assert result.exit_code == 0
+    assert fake_client.calls == [("paper", "1706.03762"), ("paper_overview", ("version-id", "fr"))]
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_text_missing_page_preserves_error_in_both_output_modes(fake_client, json_output):
+    flags = ["--json"] if json_output else []
+    result = runner.invoke(app, ["paper", "text", "1706.03762", "--page", "2", *flags])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert json.loads(result.stderr) == {
+        "error": {"code": "invalid_input", "message": "paper text does not contain page 2"}
+    }
+    assert fake_client.calls == [("paper", "1706.03762"), ("paper_full_text", "version-id")]
+    assert fake_client.closed is True
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_text_selects_requested_page_only_in_human_mode(fake_client, monkeypatch, json_output):
+    pages = [{"pageNumber": 1, "text": "Page one"}, {"pageNumber": 3, "text": "Page three"}]
+
+    def full_text(version_id):
+        fake_client.calls.append(("paper_full_text", version_id))
+        return FullTextResponse.model_validate({"pages": pages})
+
+    monkeypatch.setattr(fake_client, "paper_full_text", full_text)
+    flags = ["--json"] if json_output else []
+    result = runner.invoke(app, ["paper", "text", "1706.03762", "--page", "3", *flags])
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    if json_output:
+        assert json.loads(result.stdout) == {
+            "pages": [{"page_number": 1, "text": "Page one"}, {"page_number": 3, "text": "Page three"}]
+        }
+    else:
+        assert result.stdout == "Page three\n"
+    assert fake_client.calls == [("paper", "1706.03762"), ("paper_full_text", "version-id")]
+    assert fake_client.closed is True
+
+
+@pytest.mark.parametrize("args", [["text"], ["overview"], ["related", "--kind", "figures"]])
+def test_failed_paper_lookup_stops_before_dependent_request(fake_client, monkeypatch, args):
+    def fail(identifier):
+        fake_client.calls.append(("paper", identifier))
+        raise NotFoundError("paper not found")
+
+    monkeypatch.setattr(fake_client, "paper", fail)
+    result = runner.invoke(app, ["paper", *args, "missing", "--json"])
+
+    assert result.exit_code == 4
+    assert result.stdout == ""
+    assert json.loads(result.stderr) == {"error": {"code": "not_found", "message": "paper not found"}}
+    assert fake_client.calls == [("paper", "missing")]
+    assert fake_client.closed is True

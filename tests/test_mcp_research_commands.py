@@ -1,5 +1,6 @@
 import json
 from typing import Self
+from unittest.mock import Mock
 
 import pytest
 from typer.testing import CliRunner
@@ -169,6 +170,67 @@ def test_research_validation_and_quota_errors_are_stable(fake_client: FakeMcpCli
     assert quota.exit_code == 5
     assert json.loads(quota.stderr)["error"]["code"] == "rate_limited"
     assert [name for name, _ in fake_client.calls] == ["initialize", "discover_papers", "close"]
+
+
+@pytest.mark.parametrize("control", [*range(32), 127])
+@pytest.mark.parametrize("field", ["keywords", "question", "paper", "queries"])
+def test_control_errors_exit_before_creating_client(monkeypatch, control, field):
+    factory = Mock(side_effect=AssertionError("invalid input must not open a client"))
+    monkeypatch.setattr(common_command, "McpClient", factory)
+    invalid = f"a{chr(control)}b"
+    if field in {"keywords", "question"}:
+        args = [
+            "research",
+            "discover",
+            invalid if field == "question" else "Question",
+            "--keyword",
+            invalid if field == "keywords" else "topic",
+        ]
+    else:
+        args = [
+            "paper",
+            "query",
+            invalid if field == "paper" else "1706.03762",
+            "--query",
+            invalid if field == "queries" else "Question",
+        ]
+
+    result = runner.invoke(app, [*args, "--json"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "invalid_input"
+    assert f"Value error, {field} must not contain control characters" in error["message"]
+    factory.assert_not_called()
+
+
+def test_invalid_date_range_exits_before_creating_client(monkeypatch):
+    factory = Mock(side_effect=AssertionError("invalid input must not open a client"))
+    monkeypatch.setattr(common_command, "McpClient", factory)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "discover",
+            "Question",
+            "--keyword",
+            "topic",
+            "--published-after",
+            "2026-02-01",
+            "--published-before",
+            "2026-01-01",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "invalid_input"
+    assert "published_after must not be later than published_before" in error["message"]
+    factory.assert_not_called()
 
 
 def test_research_human_output_prints_complete_text(fake_client: FakeMcpClient) -> None:
